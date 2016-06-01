@@ -487,8 +487,12 @@ helper create_and_run_stack => sub {
 
 	$c->app->log->debug($c->app->dumper($data));
 	my $col = $c->db->get_collection("stacks");
-	eval {$col->insert_one({ _id => $stack, %$data }) };
-	$col->update_one({ _id => $stack}, {'$set' => $data}) if $@;
+	$c->app->log->debug("UPDATE ONE:", "{_id => $stack}", $c->app->dumper($data), "{upsert => 1}");
+	$col->update_one(
+		{ _id => $stack },
+		{'$set' => $data},
+		{ upsert => 1 }
+	);
 	$c->create_stack($stack => sub {
 		$c->run_stack($stack => sub {
 			my $scales = shift;
