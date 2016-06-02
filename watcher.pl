@@ -51,7 +51,7 @@ helper separe_file => sub {
 	}
 	if(exists $file->{metrics}) {
 		my $metrics = delete $file->{metrics};
-		%metrics = ref $metrics eq "ARRAY" ? map {($_ => 1)} @$metrics : %$metrics
+		%metrics = map {ref $_ eq "HASH" ? ($_->{name} => $_) : ($_ => {})} @$metrics
 	}
 
 	{compose => $file, scale => \%scale, alerts => \%alerts, metrics => \%metrics, stack => $stack}
@@ -272,7 +272,7 @@ helper create_alerts => sub {
 				my $ops = join "|", sort {length $b <=> length $a} keys %{ $c->comparations };
 				my ($op, $val) = ($1, $2) if $alerts->{$alert}{$metric} =~ /^\s*($ops)\s*(.*?)$/i;
 				die "Not a valid constraint: $metric: $alerts->{$alert}{$metric}" unless defined $op and defined $val;
-				$c->create_metric($scale, $metric) unless $c->metric_exists($scale => $metric);
+				$c->create_metric($stack, $metric) unless $c->metric_exists($stack => $metric);
 				$c->ee->on("metric $metric" => sub {
 					$c->app->log->debug(("-" x 60) . "testing alert: $alert");
 					my $ee		= shift;
@@ -395,14 +395,23 @@ helper create_metric => sub {
 	my $stack	= shift;
 	my $metric	= shift;
 	my $conf	= shift;
-	my $interval	= $conf->{interval} || 15;
-	my $
+	my $interval	= $conf->{interval}	|| 15;
+	my $measurement	= $conf->{measurement}	|| $metric;
+	my $tag		= $conf->{tags};
+	my $field	= $conf->{field}	|| "value";
+	my $transform	= $conf->{transform}	|| "mean";
+	my $select	= $conf->{select}	|| "$transform($field)";
+	my $where	= $conf->{where}	|| join " AND ", "time > now() - ${interval}s", map {"$_ = $tag->{$_}"} keys %{ ref $tag eq "HASH" ? $tag : {} };
+	my $group_by	= $conf->{group_by}	|| "time(${interval}s) fill(none)";
+	my $query	= $conf->{query}	||
+		qq{select $select from "$measurement" where $where group by $group_by}
+	;
 
 	$c->app->log->debug("create_metric $stack, $metric: $conf");
 
 	$c->remove_metric($stack => $metric);
 	$c->timers->{metric}{$stack}{$metric} = Mojo::IOLoop->recurring($interval => sub {
-		$c->get_metric($metric, $stack => sub {
+		$c->get_metric($metric, $stack, $query => sub {
 			my $value = shift;
 			$c->app->log->debug("METRIC $metric: $value <" . ("-" x 30));
 			$c->ee->emit("metric $metric", $value);
@@ -414,9 +423,10 @@ helper get_metric => sub {
 	my $c		= shift;
 	my $metric	= shift;
 	my $stack	= shift;
+	my $query	= shift;
 	my $cb		= shift;
 
-	$c->influxdb_query(qq{select mean("value") from "$metric" where time > now() - 15s group by time(15s) fill(none)} => sub {
+	$c->influxdb_query($query => sub {
 		$c->app->log->debug(("-" x 90) . "value:", $c->app->dumper(@_));
 		my $data = pop;
 		$cb->($data->{mean});
