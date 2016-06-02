@@ -273,7 +273,7 @@ helper create_alerts => sub {
 				my ($op, $val) = ($1, $2) if $alerts->{$alert}{$metric} =~ /^\s*($ops)\s*(.*?)$/i;
 				die "Not a valid constraint: $metric: $alerts->{$alert}{$metric}" unless defined $op and defined $val;
 				$c->create_metric($stack, $metric) unless $c->metric_exists($stack => $metric);
-				$c->ee->on("metric $metric" => sub {
+				$c->ee->on("metric $stack $metric" => sub {
 					$c->app->log->debug(("-" x 60) . "testing alert: $alert");
 					my $ee		= shift;
 					my $value	= shift;
@@ -414,7 +414,7 @@ helper create_metric => sub {
 		$c->get_metric($metric, $stack, $query => sub {
 			my $value = shift;
 			$c->app->log->debug("METRIC $metric: $value <" . ("-" x 30));
-			$c->ee->emit("metric $metric", $value);
+			$c->ee->emit("metric $stack $metric", $value);
 		});
 	});
 };
