@@ -255,7 +255,7 @@ helper create_metrics => sub {
 	my $metrics = $c->get_data($stack, "metrics");
 	if($metrics) {
 		for my $metric(keys %$metrics) {
-			$c->recurring_metric($stack, $metric, $metrics->{$metric})
+			$c->create_metric($stack, $metric, $metrics->{$metric})
 		}
 	}
 };
@@ -272,6 +272,7 @@ helper create_alerts => sub {
 				my $ops = join "|", sort {length $b <=> length $a} keys %{ $c->comparations };
 				my ($op, $val) = ($1, $2) if $alerts->{$alert}{$metric} =~ /^\s*($ops)\s*(.*?)$/i;
 				die "Not a valid constraint: $metric: $alerts->{$alert}{$metric}" unless defined $op and defined $val;
+				$c->create_metric($scale, $metric) unless $c->metric_exists($scale => $metric);
 				$c->ee->on("metric $metric" => sub {
 					$c->app->log->debug(("-" x 60) . "testing alert: $alert");
 					my $ee		= shift;
@@ -375,18 +376,32 @@ helper run_stack => sub {
 	$c->scale_stack($stack, $scale => $cb);
 };
 
-helper recurring_metric => sub {
+helper metric_exists => sub {
+	my $c		= shift;
+	my $stack	= shift;
+	my $metric	= shift;
+	exists $c->timers->{metric}{$stack} and exists $c->timers->{metric}{$stack}{$metric}
+};
+
+helper remove_metric => sub {
+	my $c		= shift;
+	my $stack	= shift;
+	my $metric	= shift;
+	Mojo::IOLoop->remove($c->timers->{metric}{$stack}{$metric}) if$c->metric_exists($stack => $metric)
+};
+
+helper create_metric => sub {
 	my $c		= shift;
 	my $stack	= shift;
 	my $metric	= shift;
 	my $conf	= shift;
+	my $interval	= $conf->{interval} || 15;
+	my $
 
-	$c->app->log->debug("recurring_metric $stack, $metric: $conf");
+	$c->app->log->debug("create_metric $stack, $metric: $conf");
 
-	if(exists $c->timers->{metric}{$stack} and exists $c->timers->{metric}{$stack}{$metric}) {
-		Mojo::IOLoop->remove($c->timers->{metric}{$stack}{$metric})
-	}
-	$c->timers->{metric}{$stack}{$metric} = Mojo::IOLoop->recurring(15 => sub {
+	$c->remove_metric($stack => $metric);
+	$c->timers->{metric}{$stack}{$metric} = Mojo::IOLoop->recurring($interval => sub {
 		$c->get_metric($metric, $stack => sub {
 			my $value = shift;
 			$c->app->log->debug("METRIC $metric: $value <" . ("-" x 30));
